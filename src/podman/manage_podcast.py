@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-import argparse
+
 import mimetypes
 import os
 import shutil
-import sys
 import uuid
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from collections.abc import Hashable
+from datetime import UTC, datetime
 from email.utils import format_datetime
 from pathlib import Path
+from typing import Any
 
-try:
-    import yaml
-except ModuleNotFoundError:
-    yaml = None
-
+import yaml
+from loguru import logger
 
 BASE_URL = os.environ.get("PODCAST_BASE_URL", "").rstrip("/")
 PLACEHOLDER_PAGES_URL = "https://YOUR_USERNAME.github.io/YOUR_REPO"
@@ -31,66 +29,54 @@ ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 ET.register_namespace("itunes", ITUNES_NS)
 
 
-def load_master_config():
-    require_yaml()
+def load_master_config() -> dict[str, Any]:
     if not MASTER_CONFIG.exists():
         return {}
 
-    with MASTER_CONFIG.open("r", encoding="utf-8") as f:
+    with MASTER_CONFIG.open("r") as f:
         return yaml.safe_load(f) or {}
 
 
-def save_master_config(config):
-    require_yaml()
-    with MASTER_CONFIG.open("w", encoding="utf-8") as f:
+def save_master_config(config: dict[str, Any]) -> None:
+    with MASTER_CONFIG.open("w") as f:
         yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
 
 
-def require_yaml():
-    if yaml is None:
-        print(
-            "Error: PyYAML is required. Install dependencies with "
-            "'python3 -m pip install -r requirements.txt'.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-
-def sanitize_title(filename):
+def sanitize_title(filename: str | Path) -> str:
     name = Path(filename).stem
     return name.replace("_", " ").replace("-", " ").strip().title()
 
 
-def parse_published_at(value):
+def parse_published_at(value: Any) -> datetime:
     if isinstance(value, datetime):
         parsed = value
     else:
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except (AttributeError, ValueError) as exc:
-            raise argparse.ArgumentTypeError(
+            raise TypeError(
                 "published timestamp must be a valid ISO 8601 value"
             ) from exc
 
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise argparse.ArgumentTypeError(
+        raise TypeError(
             "published timestamp must include a timezone (for example, Z or +00:00)"
         )
 
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
-def format_published_at(value):
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+def format_published_at(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def is_valid_feed_key(feed_key):
+def is_valid_feed_key(feed_key: str) -> bool:
     return bool(feed_key) and all(
         char.islower() or char.isdigit() or char == "-" for char in feed_key
     )
 
 
-def find_audio_file(episode_dir):
+def find_audio_file(episode_dir: Path) -> Path | None:
     audio_files = sorted(
         path
         for path in episode_dir.iterdir()
@@ -99,34 +85,32 @@ def find_audio_file(episode_dir):
     return audio_files[0] if audio_files else None
 
 
-def audio_mime_type(audio_path):
+def audio_mime_type(audio_path: Path) -> str:
     guessed, _ = mimetypes.guess_type(audio_path.name)
     return guessed or "audio/mpeg"
 
 
-def validate_publishable_file(file_path):
+def validate_publishable_file(file_path: Path) -> None:
     file_size = file_path.stat().st_size
     if file_size > MAX_GITHUB_FILE_SIZE_BYTES:
-        print(
+        raise ValueError(
             f"Error: '{file_path}' is {format_mib(file_size)}. GitHub blocks files "
             "larger than 100 MiB. Compress the file or use external object storage.",
-            file=sys.stderr,
         )
-        sys.exit(1)
 
 
-def format_mib(size_bytes):
+def format_mib(size_bytes: int) -> str:
     return f"{size_bytes / (1024 * 1024):.1f} MiB"
 
 
-def public_url_path(path):
+def public_url_path(path: Path) -> str:
     try:
         return path.relative_to(PUBLIC_FOLDER).as_posix()
     except ValueError:
         return path.as_posix()
 
 
-def find_episode_by_id(episode_id):
+def find_episode_by_id(episode_id: str) -> Path | None:
     if not EPISODES_FOLDER.exists():
         return None
 
@@ -137,16 +121,16 @@ def find_episode_by_id(episode_id):
     )
 
     if len(matches) > 1:
-        print(
-            f"Error: Episode ID '{episode_id}' matches multiple episode folders.",
-            file=sys.stderr,
+        raise ValueError(
+            f"Error: Episode ID '{episode_id}' matches multiple episode folders."
         )
-        sys.exit(1)
 
     return matches[0] if matches else None
 
 
-def create_base_feed(show_id, show_meta):
+def create_base_feed(
+    show_id: str, show_meta: dict[Hashable, Any]
+) -> tuple[ET.Element[str], ET.Element[str]]:
     rss = ET.Element("rss", version="2.0")
     channel = ET.SubElement(rss, "channel")
 
@@ -171,7 +155,9 @@ def create_base_feed(show_id, show_meta):
     return rss, channel
 
 
-def episode_metadata(episode_dir, audio_path):
+def episode_metadata(
+    episode_dir: Path, audio_path: Path
+) -> tuple[str, str, str | None]:
     title = sanitize_title(audio_path.name)
     description = "No description provided."
     published_at = None
@@ -179,37 +165,34 @@ def episode_metadata(episode_dir, audio_path):
 
     if metadata_path.exists():
         try:
-            with metadata_path.open("r", encoding="utf-8") as f:
+            with metadata_path.open("r") as f:
                 metadata = yaml.safe_load(f) or {}
             title = metadata.get("title") or title
             description = metadata.get("description") or description
             published_at = metadata.get("published_at")
         except yaml.YAMLError as exc:
-            print(f"Warning: Could not parse {metadata_path}: {exc}", file=sys.stderr)
+            logger.warning(f"Could not parse {metadata_path}: {exc}.")
 
     return title, description, published_at
 
 
-def resolve_publication_datetime(published_at, audio_path, metadata_path):
+def resolve_publication_datetime(
+    published_at: datetime | str | None, audio_path: Path, metadata_path: Path
+) -> datetime:
     if published_at:
         try:
             return parse_published_at(published_at)
-        except argparse.ArgumentTypeError:
-            print(
-                f"Warning: Invalid published_at in {metadata_path}; using audio mtime.",
-                file=sys.stderr,
+        except TypeError:
+            logger.warning(
+                f"Invalid published_at in {metadata_path}; using audio mtime."
             )
 
-    return datetime.fromtimestamp(audio_path.stat().st_mtime, tz=timezone.utc)
+    return datetime.fromtimestamp(audio_path.stat().st_mtime, tz=UTC)
 
 
 def build_all_feeds():
     if not BASE_URL:
-        print(
-            "Error: PODCAST_BASE_URL is required when rebuilding feeds.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        raise ValueError("PODCAST_BASE_URL is required when rebuilding feeds.")
 
     config = load_master_config()
     (PUBLIC_FOLDER / FEEDS_FOLDER).mkdir(parents=True, exist_ok=True)
@@ -221,37 +204,32 @@ def build_all_feeds():
         feed_id = (show_meta or {}).get("feed_id")
 
         if not feed_id:
-            print(f"Warning: Feed '{show_key}' is missing feed_id. Skipping.")
+            logger.warning(f"Feed '{show_key}' is missing feed_id. Skipping.")
             continue
 
         episodes = []
         for episode_path in episode_paths:
             episode_dir = Path(episode_path)
             if not episode_dir.exists():
-                print(f"Warning: Reference path {episode_dir} not found. Skipping.")
+                logger.warning(f"Reference path {episode_dir} not found. Skipping.")
                 continue
 
             audio_path = find_audio_file(episode_dir)
             if not audio_path:
-                print(f"Warning: No audio file found in {episode_dir}. Skipping.")
+                logger.warning(f"No audio file found in {episode_dir}. Skipping.")
                 continue
 
             title, description, published_at = episode_metadata(episode_dir, audio_path)
             publication_datetime = resolve_publication_datetime(
                 published_at, audio_path, episode_dir / "episode.yml"
             )
-            episodes.append(
-                (publication_datetime, audio_path, title, description)
-            )
+            episodes.append((publication_datetime, audio_path, title, description))
 
         for publication_datetime, audio_path, title, description in sorted(
             episodes, key=lambda episode: episode[0], reverse=True
         ):
             file_size = audio_path.stat().st_size
-            pub_date = format_datetime(
-                publication_datetime,
-                usegmt=True,
-            )
+            pub_date = format_datetime(publication_datetime, usegmt=True)
             file_url = f"{BASE_URL}/{public_url_path(audio_path)}"
 
             item = ET.SubElement(channel, "item")
@@ -274,7 +252,7 @@ def build_all_feeds():
             f.write(b'<?xml version="1.0" encoding="UTF-8"?>\n')
             tree.write(f, encoding="utf-8", xml_declaration=False)
 
-        print(f"Rebuilt feed: {output_path}")
+        logger.success(f"Rebuilt feed: {output_path}.")
 
 
 def cmd_create_feed(args):
@@ -282,15 +260,12 @@ def cmd_create_feed(args):
     show_key = args.feed
 
     if not is_valid_feed_key(show_key):
-        print(
-            "Error: Feed key must use only lowercase letters, numbers, and hyphens.",
-            file=sys.stderr,
+        raise ValueError(
+            "Feed key must use only lowercase letters, numbers, and hyphens."
         )
-        sys.exit(1)
 
     if show_key in config:
-        print(f"Error: Feed '{show_key}' already exists.", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError(f"Feed '{show_key}' already exists.")
 
     feed_id = str(uuid.uuid4())
     cover_path = None
@@ -298,15 +273,10 @@ def cmd_create_feed(args):
     if args.cover:
         source_cover = Path(args.cover).expanduser()
         if not source_cover.exists():
-            print(f"Error: Cover file '{source_cover}' not found.", file=sys.stderr)
-            sys.exit(1)
+            raise ValueError(f"Cover file '{source_cover}' not found.")
 
         if source_cover.suffix.lower() not in COVER_EXTENSIONS:
-            print(
-                f"Error: '{source_cover}' is not a supported cover image.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            raise ValueError(f"'{source_cover}' is not a supported cover image.")
 
         validate_publishable_file(source_cover)
         COVERS_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -323,7 +293,7 @@ def cmd_create_feed(args):
         config[show_key]["cover"] = cover_path.as_posix()
 
     save_master_config(config)
-    print(
+    logger.success(
         "Success! Once you push these changes to GitHub, your new feed will be "
         f"available at:\n{PLACEHOLDER_PAGES_URL}/feeds/{feed_id}.xml"
     )
@@ -334,16 +304,13 @@ def cmd_add_episode(args):
     audio_path = Path(args.audio_path).expanduser()
 
     if args.feed not in config:
-        print(f"Error: Target feed '{args.feed}' does not exist.", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError(f"Target feed '{args.feed}' does not exist.")
 
     if not audio_path.exists():
-        print(f"Error: Local audio file '{audio_path}' not found.", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError(f"Local audio file '{audio_path}' not found.")
 
     if audio_path.suffix.lower() not in AUDIO_EXTENSIONS:
-        print(f"Error: '{audio_path}' is not a supported audio file.", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError(f"'{audio_path}' is not a supported audio file.")
 
     validate_publishable_file(audio_path)
 
@@ -353,7 +320,7 @@ def cmd_add_episode(args):
     destination = episode_dir / f"audio{audio_path.suffix.lower()}"
     shutil.copy2(audio_path, destination)
 
-    published_at = args.published_at or datetime.now(timezone.utc)
+    published_at = args.published_at or datetime.now(UTC)
     episode = {"published_at": format_published_at(published_at)}
     if args.title or args.description:
         episode = {
@@ -366,31 +333,28 @@ def cmd_add_episode(args):
 
     config[args.feed].setdefault("episodes", []).append(episode_dir.as_posix())
     save_master_config(config)
-    print(f"Episode added to '{args.feed}' at {episode_dir}")
+    logger.success(f"Episode added to '{args.feed}' at {episode_dir}")
 
 
 def cmd_cross_post(args):
     config = load_master_config()
 
     if args.to_feed not in config:
-        print(f"Error: Target feed '{args.to_feed}' does not exist.", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError(f"Target feed '{args.to_feed}' does not exist.")
 
     episode_dir = find_episode_by_id(args.episode_id)
 
     if not episode_dir:
-        print(
-            f"Error: Could not find an episode folder matching '{args.episode_id}'.",
-            file=sys.stderr,
+        raise FileNotFoundError(
+            f"Error: Could not find an episode folder matching '{args.episode_id}'."
         )
-        sys.exit(1)
 
     matched_path = episode_dir.as_posix()
     target_episodes = config[args.to_feed].setdefault("episodes", [])
     if matched_path in target_episodes:
-        print(f"Episode already cross-posted to '{args.to_feed}'.")
+        logger.info(f"Episode already cross-posted to '{args.to_feed}'.")
         return
 
     target_episodes.append(matched_path)
     save_master_config(config)
-    print(f"Cross-posted {matched_path} to '{args.to_feed}'.")
+    logger.success(f"Cross-posted {matched_path} to '{args.to_feed}'.")
