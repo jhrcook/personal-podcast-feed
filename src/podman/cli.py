@@ -13,9 +13,10 @@ from podman.manage_podcast import (
     cmd_cross_post,
 )
 
-app = Typer(help="Podcast feed production CLI")
+app = Typer(help="Podcast feed production CLI", add_completion=False)
 
 
+@app.command()
 def create_feed(
     feed: Annotated[str, Argument(help="Feed key used by other CLI commands.")],
     title: Annotated[
@@ -32,6 +33,7 @@ def create_feed(
     cmd_create_feed(show_key=feed, title=title, description=description, cover=cover)
 
 
+@app.command()
 def add_episode(
     audio_path: Annotated[
         Path, Argument(help="Path to a local audio file.", resolve_path=True)
@@ -61,6 +63,7 @@ def add_episode(
     )
 
 
+@app.command()
 def cross_post(
     to_feed: Annotated[str, Option("-t", "--to", help="Destination feed key")],
     episode_id: Annotated[
@@ -71,10 +74,7 @@ def cross_post(
     cmd_cross_post(to_feed=to_feed, episode_id=episode_id)
 
 
+@app.command()
 def rebuild() -> None:
     "Regenerate public feed files for GitHub Actions."
     build_all_feeds()
-
-
-if __name__ == "__main__":
-    app()
