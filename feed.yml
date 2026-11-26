@@ -2,5 +2,6 @@ jhc-podcast:
   feed_id: 64f3f840-6e32-4def-acae-183cf5a435c4
   title: JHC Podcast
   description: My custom podcast feed.
-  episodes: []
+  episodes:
+  - public/episodes/8f51b589-780b-4a0b-bacc-57885996b896
   cover: public/covers/64f3f840-6e32-4def-acae-183cf5a435c4.jpeg
