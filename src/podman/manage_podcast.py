@@ -255,9 +255,10 @@ def build_all_feeds():
         logger.success(f"Rebuilt feed: {output_path}.")
 
 
-def cmd_create_feed(args):
+def cmd_create_feed(
+    show_key: str, title: str, description: str | None, cover: Path | None
+) -> None:
     config = load_master_config()
-    show_key = args.feed
 
     if not is_valid_feed_key(show_key):
         raise ValueError(
@@ -270,8 +271,8 @@ def cmd_create_feed(args):
     feed_id = str(uuid.uuid4())
     cover_path = None
 
-    if args.cover:
-        source_cover = Path(args.cover).expanduser()
+    if cover:
+        source_cover = cover.expanduser()
         if not source_cover.exists():
             raise ValueError(f"Cover file '{source_cover}' not found.")
 
@@ -285,8 +286,8 @@ def cmd_create_feed(args):
 
     config[show_key] = {
         "feed_id": feed_id,
-        "title": args.title,
-        "description": args.description or f"The {args.title} podcast feed.",
+        "title": title,
+        "description": description or f"The {title} podcast feed.",
         "episodes": [],
     }
     if cover_path:
@@ -294,17 +295,22 @@ def cmd_create_feed(args):
 
     save_master_config(config)
     logger.success(
-        "Success! Once you push these changes to GitHub, your new feed will be "
+        "Once you push these changes to GitHub, your new feed will be "
         f"available at:\n{PLACEHOLDER_PAGES_URL}/feeds/{feed_id}.xml"
     )
 
 
-def cmd_add_episode(args):
+def cmd_add_episode(
+    audio_path: Path,
+    feed: str,
+    title: str | None,
+    description: str | None,
+    published_at: datetime | None,
+) -> None:
     config = load_master_config()
-    audio_path = Path(args.audio_path).expanduser()
 
-    if args.feed not in config:
-        raise ValueError(f"Target feed '{args.feed}' does not exist.")
+    if feed not in config:
+        raise ValueError(f"Target feed '{feed}' does not exist.")
 
     if not audio_path.exists():
         raise ValueError(f"Local audio file '{audio_path}' not found.")
@@ -320,41 +326,41 @@ def cmd_add_episode(args):
     destination = episode_dir / f"audio{audio_path.suffix.lower()}"
     shutil.copy2(audio_path, destination)
 
-    published_at = args.published_at or datetime.now(UTC)
+    published_at = published_at or datetime.now(UTC)
     episode = {"published_at": format_published_at(published_at)}
-    if args.title or args.description:
+    if title or description:
         episode = {
-            "title": args.title or sanitize_title(audio_path.name),
-            "description": args.description or "No description provided.",
+            "title": title or sanitize_title(audio_path.name),
+            "description": description or "No description provided.",
             **episode,
         }
     with (episode_dir / "episode.yml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(episode, f, default_flow_style=False, sort_keys=False)
 
-    config[args.feed].setdefault("episodes", []).append(episode_dir.as_posix())
+    config[feed].setdefault("episodes", []).append(episode_dir.as_posix())
     save_master_config(config)
-    logger.success(f"Episode added to '{args.feed}' at {episode_dir}")
+    logger.success(f"Episode added to '{feed}' at {episode_dir}")
 
 
-def cmd_cross_post(args):
+def cmd_cross_post(to_feed: str, episode_id: str) -> None:
     config = load_master_config()
 
-    if args.to_feed not in config:
-        raise ValueError(f"Target feed '{args.to_feed}' does not exist.")
+    if to_feed not in config:
+        raise ValueError(f"Target feed '{to_feed}' does not exist.")
 
-    episode_dir = find_episode_by_id(args.episode_id)
+    episode_dir = find_episode_by_id(episode_id)
 
     if not episode_dir:
         raise FileNotFoundError(
-            f"Error: Could not find an episode folder matching '{args.episode_id}'."
+            f"Error: Could not find an episode folder matching '{episode_id}'."
         )
 
     matched_path = episode_dir.as_posix()
-    target_episodes = config[args.to_feed].setdefault("episodes", [])
+    target_episodes = config[to_feed].setdefault("episodes", [])
     if matched_path in target_episodes:
-        logger.info(f"Episode already cross-posted to '{args.to_feed}'.")
+        logger.info(f"Episode already cross-posted to '{to_feed}'.")
         return
 
     target_episodes.append(matched_path)
     save_master_config(config)
-    logger.success(f"Cross-posted {matched_path} to '{args.to_feed}'.")
+    logger.success(f"Cross-posted {matched_path} to '{to_feed}'.")

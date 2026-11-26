@@ -29,11 +29,13 @@ def create_feed(
     ] = None,
 ) -> None:
     """Create a new show feed."""
-    cmd_create_feed(feed=feed, title=title, description=description, cover=cover)
+    cmd_create_feed(show_key=feed, title=title, description=description, cover=cover)
 
 
 def add_episode(
-    audio_path: Annotated[str, Argument(help="Path to a local audio file.")],
+    audio_path: Annotated[
+        Path, Argument(help="Path to a local audio file.", resolve_path=True)
+    ],
     feed: Annotated[str, Option(help="Target feed key.")],
     title: Annotated[str | None, Option(help="Episode title.")] = None,
     description: Annotated[str | None, Option(help="Episode description.")] = None,
@@ -60,14 +62,13 @@ def add_episode(
 
 
 def cross_post(
-    from_feed: Annotated[str, Option("-f", "--from", help="Source feed key.")],
     to_feed: Annotated[str, Option("-t", "--to", help="Destination feed key")],
     episode_id: Annotated[
         str, Option("-e", "--episode", help="UUID or UUID fragment.")
     ],
 ) -> None:
     """Link an existing episode to another feed."""
-    cmd_cross_post(from_feed=from_feed, to_feed=to_feed, episode_id=episode_id)
+    cmd_cross_post(to_feed=to_feed, episode_id=episode_id)
 
 
 def rebuild() -> None:
