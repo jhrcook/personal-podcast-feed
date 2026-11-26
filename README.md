@@ -1,16 +1,19 @@
 # Free and Open Source Podcast Hosing using Github Pages
 
 Distribute your own small-scale podcast with minimal setup so you can:
+
 - Host a public podcast for your niche community or blog
 - Create and distribute a private weekly update podcast within your company
 - Have your agent do deep dive research reports and automatically publish the findings to a podcast episode for you to consume on your phone. (This was my main reason for building this!)
 
 Highlights:
+
 - Built on top of Github Pages and Github Actions so hosting is free and takes only 4-minutes to setup
 - (With a paid Github account) Supports unlisted/undiscoverable RSS feeds, so you can publish sensitive information for consumption by a restricted audience
 - Comes with a lightweight CLI that makes it easy for both humans and agents to publish and manage episodes and feeds
 
 ## Limitations
+
 - [Published GitHub Pages sites may not be larger than 1 GB.](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
 - [GitHub Pages has a soft bandwidth limit of 100 GB per month.](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
 - [GitHub blocks individual files larger than 100 MiB.](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github)
@@ -20,6 +23,7 @@ Highlights:
 The CLI rejects audio files larger than 100 MiB before adding them to `public/episodes/`.
 
 For spoken-word podcasts, 64 kbps mono MP3 is usually fine. If you adhere to this bitrate, this means approximate limitations of:
+
 - 3.5 hours of audio per episode
 - 35 hours of total published audio
 - 3,400 hours of audio downloaded per month
@@ -40,20 +44,20 @@ Repository page -> Settings -> Pages -> Build and deployment -> Source -> GitHub
 
 In the UI GitHub may shows suggested workflows such as “GitHub Pages Jekyll” or “Static HTML,” do not choose one. This repo already includes a Github Action workflow that will run the next time you push changes to the repo. The workflow detects your GitHub Pages URL automatically, rebuilds the RSS feeds, and publishes the generated `public/` directory.
 
-3. Clone your fork locally and install the only Python dependency:
+1. Clone your fork locally and install the only Python dependency:
 
 ```bash
 python3 -m pip install -r requirements.txt
 ```
 
-4. Locally create your first feed and add your first podcast episode to it
+1. Locally create your first feed and add your first podcast episode to it
 
 ```bash
 python3 manage_podcast.py create_feed my-podcast --title "My Podcast" --description "A show about interesting things." --cover ~/Desktop/cover.jpg
 python3 manage_podcast.py add_episode ~/Desktop/interview.mp3 --feed my-podcast --title "First Episode" --description "A short intro episode."
 ```
 
-5. Push your local changes to Github
+1. Push your local changes to Github
 
 ```bash
 git add feed.yml public/episodes
