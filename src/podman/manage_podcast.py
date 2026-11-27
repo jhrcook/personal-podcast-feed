@@ -1,11 +1,8 @@
-#!/usr/bin/env python3
-
 import mimetypes
 import os
 import shutil
 import uuid
 import xml.etree.ElementTree as ET
-from collections.abc import Hashable
 from datetime import UTC, datetime
 from email.utils import format_datetime
 from pathlib import Path
@@ -13,6 +10,7 @@ from typing import Any
 
 import yaml
 from loguru import logger
+from pydantic import BaseModel, DirectoryPath, Field, FilePath, TypeAdapter
 
 BASE_URL = os.environ.get("PODCAST_BASE_URL", "").rstrip("/")
 PLACEHOLDER_PAGES_URL = "https://YOUR_USERNAME.github.io/YOUR_REPO"
@@ -29,17 +27,36 @@ ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 ET.register_namespace("itunes", ITUNES_NS)
 
 
-def load_master_config() -> dict[str, Any]:
+class FeedConfiguration(BaseModel):
+    """Feed configuration."""
+
+    feed_id: str
+    title: str | None
+    description: str | None
+    episodes: list[DirectoryPath] = Field(default_factory=list)
+    cover: FilePath | None
+    language: str = "en-us"
+
+    def get_title(self) -> str:
+        return self.title or self.feed_id
+
+
+MasterConfiguration = dict[str, FeedConfiguration]
+master_configuration_validator = TypeAdapter(MasterConfiguration)
+
+
+def load_master_config() -> MasterConfiguration:
     if not MASTER_CONFIG.exists():
         return {}
 
     with MASTER_CONFIG.open("r") as f:
-        return yaml.safe_load(f) or {}
+        return master_configuration_validator.validate_python(yaml.safe_load(f) or {})
 
 
-def save_master_config(config: dict[str, Any]) -> None:
+def save_master_config(config: MasterConfiguration) -> None:
+    config_python = {k: v.model_dump(mode="json") for k, v in config.items()}
     with MASTER_CONFIG.open("w") as f:
-        yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
+        yaml.safe_dump(config_python, f, default_flow_style=False, sort_keys=False)
 
 
 def sanitize_title(filename: str | Path) -> str:
@@ -129,65 +146,64 @@ def find_episode_by_id(episode_id: str) -> Path | None:
 
 
 def create_base_feed(
-    show_id: str, show_meta: dict[Hashable, Any]
+    show_id: str, show_meta: FeedConfiguration
 ) -> tuple[ET.Element[str], ET.Element[str]]:
     rss = ET.Element("rss", version="2.0")
     channel = ET.SubElement(rss, "channel")
 
-    ET.SubElement(channel, "title").text = show_meta.get("title", show_id)
-    ET.SubElement(channel, "description").text = show_meta.get(
-        "description", "No description provided."
+    show_title = show_meta.title or show_id
+    ET.SubElement(channel, "title").text = show_title
+    ET.SubElement(channel, "description").text = (
+        show_meta.description or "No description provided."
     )
     ET.SubElement(channel, "link").text = BASE_URL
-    ET.SubElement(channel, "language").text = show_meta.get("language", "en-us")
+    ET.SubElement(channel, "language").text = show_meta.language
 
-    cover_path = show_meta.get("cover")
-    if cover_path:
-        cover_url = f"{BASE_URL}/{public_url_path(Path(cover_path))}"
+    if show_meta.cover:
+        cover_url = f"{BASE_URL}/{public_url_path(show_meta.cover)}"
         image = ET.SubElement(channel, f"{{{ITUNES_NS}}}image")
         image.set("href", cover_url)
 
         rss_image = ET.SubElement(channel, "image")
         ET.SubElement(rss_image, "url").text = cover_url
-        ET.SubElement(rss_image, "title").text = show_meta.get("title", show_id)
+        ET.SubElement(rss_image, "title").text = show_title
         ET.SubElement(rss_image, "link").text = BASE_URL
 
     return rss, channel
 
 
+class EpisodeMetadata(BaseModel):
+    """Episode metadata."""
+
+    title: str
+    description: str
+    published_at: datetime
+
+
 def episode_metadata(
-    episode_dir: Path, audio_path: Path
-) -> tuple[str, str, str | None]:
-    title = sanitize_title(audio_path.name)
-    description = "No description provided."
-    published_at = None
+    episode_dir: Path, audio_path: Path, default_published_at: datetime
+) -> EpisodeMetadata:
+    default_title = sanitize_title(audio_path.name)
+    default_description = "No description provided."
     metadata_path = episode_dir / "episode.yml"
 
     if metadata_path.exists():
         try:
             with metadata_path.open("r") as f:
                 metadata = yaml.safe_load(f) or {}
-            title = metadata.get("title") or title
-            description = metadata.get("description") or description
-            published_at = metadata.get("published_at")
+            return EpisodeMetadata(
+                title=metadata.get("title", default_title),
+                description=metadata.get("description", default_description),
+                published_at=metadata.get("published_at", default_published_at),
+            )
         except yaml.YAMLError as exc:
             logger.warning(f"Could not parse {metadata_path}: {exc}.")
 
-    return title, description, published_at
-
-
-def resolve_publication_datetime(
-    published_at: datetime | str | None, audio_path: Path, metadata_path: Path
-) -> datetime:
-    if published_at:
-        try:
-            return parse_published_at(published_at)
-        except TypeError:
-            logger.warning(
-                f"Invalid published_at in {metadata_path}; using audio mtime."
-            )
-
-    return datetime.fromtimestamp(audio_path.stat().st_mtime, tz=UTC)
+    return EpisodeMetadata(
+        title=default_title,
+        description=default_description,
+        published_at=default_published_at,
+    )
 
 
 def build_all_feeds():
@@ -199,17 +215,9 @@ def build_all_feeds():
     EPISODES_FOLDER.mkdir(parents=True, exist_ok=True)
 
     for show_key, show_meta in config.items():
-        rss, channel = create_base_feed(show_key, show_meta or {})
-        episode_paths = (show_meta or {}).get("episodes", [])
-        feed_id = (show_meta or {}).get("feed_id")
-
-        if not feed_id:
-            logger.warning(f"Feed '{show_key}' is missing feed_id. Skipping.")
-            continue
-
-        episodes = []
-        for episode_path in episode_paths:
-            episode_dir = Path(episode_path)
+        rss, channel = create_base_feed(show_key, show_meta)
+        episodes: list[tuple[Path, EpisodeMetadata]] = []
+        for episode_dir in show_meta.episodes:
             if not episode_dir.exists():
                 logger.warning(f"Reference path {episode_dir} not found. Skipping.")
                 continue
@@ -219,22 +227,24 @@ def build_all_feeds():
                 logger.warning(f"No audio file found in {episode_dir}. Skipping.")
                 continue
 
-            title, description, published_at = episode_metadata(episode_dir, audio_path)
-            publication_datetime = resolve_publication_datetime(
-                published_at, audio_path, episode_dir / "episode.yml"
+            default_published_at = datetime.fromtimestamp(
+                audio_path.stat().st_mtime, tz=UTC
             )
-            episodes.append((publication_datetime, audio_path, title, description))
+            ep_metadata = episode_metadata(
+                episode_dir, audio_path, default_published_at=default_published_at
+            )
+            episodes.append((audio_path, ep_metadata))
 
-        for publication_datetime, audio_path, title, description in sorted(
-            episodes, key=lambda episode: episode[0], reverse=True
+        for audio_path, ep_metadata in sorted(
+            episodes, key=lambda episode: episode[1].published_at, reverse=True
         ):
             file_size = audio_path.stat().st_size
-            pub_date = format_datetime(publication_datetime, usegmt=True)
+            pub_date = format_datetime(ep_metadata.published_at, usegmt=True)
             file_url = f"{BASE_URL}/{public_url_path(audio_path)}"
 
             item = ET.SubElement(channel, "item")
-            ET.SubElement(item, "title").text = title
-            ET.SubElement(item, "description").text = description
+            ET.SubElement(item, "title").text = ep_metadata.title
+            ET.SubElement(item, "description").text = ep_metadata.description
             ET.SubElement(item, "pubDate").text = pub_date
 
             enclosure = ET.SubElement(item, "enclosure")
@@ -245,7 +255,7 @@ def build_all_feeds():
             guid = ET.SubElement(item, "guid", isPermaLink="true")
             guid.text = file_url
 
-        output_path = PUBLIC_FOLDER / FEEDS_FOLDER / f"{feed_id}.xml"
+        output_path = PUBLIC_FOLDER / FEEDS_FOLDER / f"{show_meta.feed_id}.xml"
         tree = ET.ElementTree(rss)
         ET.indent(tree, space="  ", level=0)
         with output_path.open("wb") as f:
@@ -269,8 +279,8 @@ def cmd_create_feed(
         raise ValueError(f"Feed '{show_key}' already exists.")
 
     feed_id = str(uuid.uuid4())
-    cover_path = None
 
+    cover_path: Path | None = None
     if cover:
         source_cover = cover.expanduser()
         if not source_cover.exists():
@@ -284,14 +294,13 @@ def cmd_create_feed(
         cover_path = COVERS_FOLDER / f"{feed_id}{source_cover.suffix.lower()}"
         shutil.copy2(source_cover, cover_path)
 
-    config[show_key] = {
-        "feed_id": feed_id,
-        "title": title,
-        "description": description or f"The {title} podcast feed.",
-        "episodes": [],
-    }
-    if cover_path:
-        config[show_key]["cover"] = cover_path.as_posix()
+    config[show_key] = FeedConfiguration(
+        feed_id=feed_id,
+        title=title,
+        description=description or f"The {title} podcast feed.",
+        episodes=[],
+        cover=cover_path,
+    )
 
     save_master_config(config)
     logger.success(
@@ -334,10 +343,10 @@ def cmd_add_episode(
             "description": description or "No description provided.",
             **episode,
         }
-    with (episode_dir / "episode.yml").open("w", encoding="utf-8") as f:
+    with (episode_dir / "episode.yml").open("w") as f:
         yaml.safe_dump(episode, f, default_flow_style=False, sort_keys=False)
 
-    config[feed].setdefault("episodes", []).append(episode_dir.as_posix())
+    config[feed].episodes.append(episode_dir)
     save_master_config(config)
     logger.success(f"Episode added to '{feed}' at {episode_dir}")
 
@@ -355,12 +364,10 @@ def cmd_cross_post(to_feed: str, episode_id: str) -> None:
             f"Error: Could not find an episode folder matching '{episode_id}'."
         )
 
-    matched_path = episode_dir.as_posix()
-    target_episodes = config[to_feed].setdefault("episodes", [])
-    if matched_path in target_episodes:
+    if episode_dir in config[to_feed].episodes:
         logger.info(f"Episode already cross-posted to '{to_feed}'.")
         return
 
-    target_episodes.append(matched_path)
+    config[to_feed].episodes.append(episode_dir)
     save_master_config(config)
-    logger.success(f"Cross-posted {matched_path} to '{to_feed}'.")
+    logger.success(f"Cross-posted {episode_dir} to '{to_feed}'.")
