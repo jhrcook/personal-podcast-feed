@@ -1,0 +1,27 @@
+[project]
+name = "podman"
+version = "0.1.0"
+description = "Podcast manager."
+readme = "README.md"
+authors = [
+    { name = "Zachary Podbela" },
+    { name = "Josh Cook", email = "joshuacook0023@gmail.com" },
+]
+requires-python = ">=3.14"
+dependencies = [
+    "loguru>=0.8.0",
+    "pydantic>=2.14.4",
+    "pyyaml>=6.0.4",
+    "typer>=0.29.3",
+]
+
+[project.scripts]
+podman = "podman:cli.app"
+
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["pre-commit>=4.7.0", "ruff>=0.17.6", "ty>=0.0.111"]
