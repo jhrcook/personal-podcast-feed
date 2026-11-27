@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 from loguru import logger
-from pydantic import BaseModel, DirectoryPath, Field, TypeAdapter
+from pydantic import BaseModel, DirectoryPath, Field, FilePath, TypeAdapter
 
 BASE_URL = os.environ.get("PODCAST_BASE_URL", "").rstrip("/")
 PLACEHOLDER_PAGES_URL = "https://YOUR_USERNAME.github.io/YOUR_REPO"
@@ -34,7 +34,7 @@ class FeedConfiguration(BaseModel):
     title: str | None
     description: str | None
     episodes: list[DirectoryPath] = Field(default_factory=list)
-    cover: Path | None
+    cover: FilePath | None
     language: str = "en-us"
 
     def get_title(self) -> str:
@@ -54,7 +54,7 @@ def load_master_config() -> MasterConfiguration:
 
 
 def save_master_config(config: MasterConfiguration) -> None:
-    config_python = {k: v.model_dump() for k, v in config.items()}
+    config_python = {k: v.model_dump(mode="json") for k, v in config.items()}
     with MASTER_CONFIG.open("w") as f:
         yaml.safe_dump(config_python, f, default_flow_style=False, sort_keys=False)
 
@@ -69,7 +69,7 @@ def parse_published_at(value: Any) -> datetime:
         parsed = value
     else:
         try:
-            parsed = datetime.fromisoformat(value)
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except (AttributeError, ValueError) as exc:
             raise TypeError(
                 "published timestamp must be a valid ISO 8601 value"
@@ -172,39 +172,38 @@ def create_base_feed(
     return rss, channel
 
 
+class EpisodeMetadata(BaseModel):
+    """Episode metadata."""
+
+    title: str
+    description: str
+    published_at: datetime
+
+
 def episode_metadata(
-    episode_dir: Path, audio_path: Path
-) -> tuple[str, str, str | None]:
-    title = sanitize_title(audio_path.name)
-    description = "No description provided."
-    published_at = None
+    episode_dir: Path, audio_path: Path, default_published_at: datetime
+) -> EpisodeMetadata:
+    default_title = sanitize_title(audio_path.name)
+    default_description = "No description provided."
     metadata_path = episode_dir / "episode.yml"
 
     if metadata_path.exists():
         try:
             with metadata_path.open("r") as f:
                 metadata = yaml.safe_load(f) or {}
-            title = metadata.get("title") or title
-            description = metadata.get("description") or description
-            published_at = metadata.get("published_at")
+            return EpisodeMetadata(
+                title=metadata.get("title", default_title),
+                description=metadata.get("description", default_description),
+                published_at=metadata.get("published_at", default_published_at),
+            )
         except yaml.YAMLError as exc:
             logger.warning(f"Could not parse {metadata_path}: {exc}.")
 
-    return title, description, published_at
-
-
-def resolve_publication_datetime(
-    published_at: datetime | str | None, audio_path: Path, metadata_path: Path
-) -> datetime:
-    if published_at:
-        try:
-            return parse_published_at(published_at)
-        except TypeError:
-            logger.warning(
-                f"Invalid published_at in {metadata_path}; using audio mtime."
-            )
-
-    return datetime.fromtimestamp(audio_path.stat().st_mtime, tz=UTC)
+    return EpisodeMetadata(
+        title=default_title,
+        description=default_description,
+        published_at=default_published_at,
+    )
 
 
 def build_all_feeds():
@@ -217,9 +216,8 @@ def build_all_feeds():
 
     for show_key, show_meta in config.items():
         rss, channel = create_base_feed(show_key, show_meta)
-        episodes = []
-        for episode_path in show_meta.episodes:
-            episode_dir = Path(episode_path)
+        episodes: list[tuple[Path, EpisodeMetadata]] = []
+        for episode_dir in show_meta.episodes:
             if not episode_dir.exists():
                 logger.warning(f"Reference path {episode_dir} not found. Skipping.")
                 continue
@@ -229,22 +227,24 @@ def build_all_feeds():
                 logger.warning(f"No audio file found in {episode_dir}. Skipping.")
                 continue
 
-            title, description, published_at = episode_metadata(episode_dir, audio_path)
-            publication_datetime = resolve_publication_datetime(
-                published_at, audio_path, episode_dir / "episode.yml"
+            default_published_at = datetime.fromtimestamp(
+                audio_path.stat().st_mtime, tz=UTC
             )
-            episodes.append((publication_datetime, audio_path, title, description))
+            ep_metadata = episode_metadata(
+                episode_dir, audio_path, default_published_at=default_published_at
+            )
+            episodes.append((audio_path, ep_metadata))
 
-        for publication_datetime, audio_path, title, description in sorted(
-            episodes, key=lambda episode: episode[0], reverse=True
+        for audio_path, ep_metadata in sorted(
+            episodes, key=lambda episode: episode[1].published_at, reverse=True
         ):
             file_size = audio_path.stat().st_size
-            pub_date = format_datetime(publication_datetime, usegmt=True)
+            pub_date = format_datetime(ep_metadata.published_at, usegmt=True)
             file_url = f"{BASE_URL}/{public_url_path(audio_path)}"
 
             item = ET.SubElement(channel, "item")
-            ET.SubElement(item, "title").text = title
-            ET.SubElement(item, "description").text = description
+            ET.SubElement(item, "title").text = ep_metadata.title
+            ET.SubElement(item, "description").text = ep_metadata.description
             ET.SubElement(item, "pubDate").text = pub_date
 
             enclosure = ET.SubElement(item, "enclosure")
@@ -279,8 +279,8 @@ def cmd_create_feed(
         raise ValueError(f"Feed '{show_key}' already exists.")
 
     feed_id = str(uuid.uuid4())
-    cover_path = None
 
+    cover_path: Path | None = None
     if cover:
         source_cover = cover.expanduser()
         if not source_cover.exists():
