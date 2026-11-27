@@ -25,3 +25,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = ["pre-commit>=4.7.0", "ruff>=0.17.6", "ty>=0.0.111"]
+
+[tool.ruff.lint]
+ignore = ["FURB162"]
