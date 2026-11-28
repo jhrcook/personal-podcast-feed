@@ -23,46 +23,37 @@ podman create_feed \
     --cover ./cover.jpeg
 ```
 
-Feed URL: <https://jhrcook.github.io/personal-podcast-feed/feeds/64f3f840-6e32-4def-acae-183cf5a435c4.xml>
+Feed URL: <https://{GH user name}.github.io/{GH repo name}/feeds/{feed UUID}.xml>
 
-### Publish and episode
+## Publishing episodes
+
+### From an existing audio file
 
 ```bash
 podman add_episode \
-    ./episode.mp3 \
-    --feed jhc-podcast \
+    episode.mp3 \
+    --feed podcast-feed \
     --title "Episode title" \
-    --description 'Episode description'
+    --description 'Episode description' # Optional
+```
+
+### Downloading from Youtube
+
+```bash
+brew install yt-dlp ffmpeg
+podman add_episode $YT_URL --feed podcast-feed
 ```
 
 ---
 
-Downloading from Youtube
-
-```bash
-brew install yt-dlp ffmpeg
-
-YT_URL="https://youtu.be/yVS1OTcvv94"
-yt-dlp -x --audio-format mp3 --audio-quality 64K -o "episode.%(ext)s" --write-info-json "${YT_URL}"
-```
-
 TODO:
 
 - [X] data models in script
-- [ ] workflow to download from youtube, parse title and description, add episode
+- [X] workflow to download from youtube, parse title and description, add episode
 - [ ] add a simple home page to the GH Pages that just shows the available episodes (should get updated by GH Actions?)
 
 Rinella on Huckberry
 
 ```bash
-YT_URL="https://youtu.be/G4aaf5F5DIE"
-yt-dlp -x --audio-format mp3 --audio-quality 64K -o "episode.%(ext)s" --write-info-json "${YT_URL}"
-
-DESCRIPTION='Join Richard Greiner, Co-Founder of Huckberry, as he sits down with Steven Rinella - Outdoorsman, Author, and Founder of MeatEater - at the MeatEater studio in Bozeman, Montana. They dig into Steves incredible journey: from building one of the most influential outdoor media brands to raising kids and writing two bestselling childrens books, "Outdoor Kids in an Inside World" and "Catch a Crayfish, Count the Stars." Steven shares what sparked the creation of MeatEater, how he balances family life with running a business, and why getting kids outdoors is more important than ever. They explore the ethos of turning discomfort into resilience, the role of backyard adventures, and the future of ethical hunting and conservation.'
-
-podman add-episode \
-    ./episode.mp3 \
-    --feed jhc-podcast \
-    --title "Huckberry: Inside the Mind of Steven Rinella" \
-    --description "${DESCRIPTION}"
+podman add-episode "https://youtu.be/G4aaf5F5DIE" --feed jhc-podcast
 ```
