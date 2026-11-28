@@ -124,6 +124,7 @@ def add_youtube(
         ),
     ] = None,
 ) -> None:
+    """Add a new episode from the audio of a Youtube video."""
     with tempfile.TemporaryDirectory() as temp_dir:
         ytdl = youtube_download(url, Path(temp_dir))
         title = title or ytdl.info.title

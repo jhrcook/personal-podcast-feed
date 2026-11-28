@@ -30,7 +30,7 @@ Feed URL: <https://{GH user name}.github.io/{GH repo name}/feeds/{feed UUID}.xml
 ### From an existing audio file
 
 ```bash
-podman add_episode \
+podman add-episode \
     episode.mp3 \
     --feed podcast-feed \
     --title "Episode title" \
@@ -41,7 +41,7 @@ podman add_episode \
 
 ```bash
 brew install yt-dlp ffmpeg
-podman add_episode $YT_URL --feed podcast-feed
+podman add-youtube $YT_URL --feed podcast-feed
 ```
 
 ---
@@ -55,5 +55,5 @@ TODO:
 Rinella on Huckberry
 
 ```bash
-podman add-episode "https://youtu.be/G4aaf5F5DIE" --feed jhc-podcast
+podman add-youtube "https://youtu.be/G4aaf5F5DIE" --feed jhc-podcast
 ```
