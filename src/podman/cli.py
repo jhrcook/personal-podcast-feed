@@ -134,4 +134,3 @@ def add_youtube(
             title=title or ytdl.info.title,
             description=description or ytdl.info.description,
         )
-        git_commit_new_episode(title)
