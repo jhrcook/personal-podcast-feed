@@ -4,4 +4,6 @@ jhc-podcast:
   description: My custom podcast feed.
   episodes:
   - public/episodes/8f51b589-780b-4a0b-bacc-57885996b896
+  - public/episodes/feb1b356-bcc9-4394-ad88-bc864b0e413b
   cover: public/covers/64f3f840-6e32-4def-acae-183cf5a435c4.jpeg
+  language: en-us
